@@ -1,6 +1,5 @@
 using NAudio.Wave;
 using System;
-using System.Timers;
 
 namespace AudioRecorderWinForms;
 
@@ -8,7 +7,7 @@ public sealed class AudioRecorder : IDisposable
 {
     private WasapiLoopbackCapture? capture;
     private WaveFileWriter? writer;
-    private readonly Timer timer;
+    private readonly System.Timers.Timer timer;
     private DateTime startTime;
     private string outputPath = string.Empty;
 
@@ -20,7 +19,7 @@ public sealed class AudioRecorder : IDisposable
 
     public AudioRecorder()
     {
-        timer = new Timer(500);
+        timer = new System.Timers.Timer(500);
         timer.Elapsed += (_, _) => ElapsedChanged?.Invoke(this, DateTime.Now - startTime);
     }
 
