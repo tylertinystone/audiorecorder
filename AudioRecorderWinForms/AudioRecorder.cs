@@ -1,17 +1,22 @@
-using NAudio.Wave;
+using ScreenRecorderLib;
 using System;
 
 namespace AudioRecorderWinForms;
 
+public enum CaptureTargetMode
+{
+    FullScreen,
+    SpecificWindow
+}
+
 public sealed class AudioRecorder : IDisposable
 {
-    private WasapiLoopbackCapture? capture;
-    private WaveFileWriter? writer;
+    private Recorder? recorder;
     private readonly System.Timers.Timer timer;
     private DateTime startTime;
     private string outputPath = string.Empty;
 
-    public bool IsRecording => capture is not null;
+    public bool IsRecording { get; private set; }
 
     public event EventHandler<TimeSpan>? ElapsedChanged;
     public event EventHandler<string>? RecordingStopped;
@@ -23,7 +28,7 @@ public sealed class AudioRecorder : IDisposable
         timer.Elapsed += (_, _) => ElapsedChanged?.Invoke(this, DateTime.Now - startTime);
     }
 
-    public void Start(string path)
+    public void Start(string path, CaptureTargetMode mode, nint targetWindowHandle)
     {
         if (IsRecording)
         {
@@ -33,20 +38,23 @@ public sealed class AudioRecorder : IDisposable
         try
         {
             outputPath = path;
-            capture = new WasapiLoopbackCapture();
-            writer = new WaveFileWriter(path, capture.WaveFormat);
-
-            capture.DataAvailable += (_, a) => writer?.Write(a.Buffer, 0, a.BytesRecorded);
-            capture.RecordingStopped += OnCaptureStopped;
+            recorder = Recorder.CreateRecorder(BuildOptions());
+            recorder.OnRecordingComplete += (_, _) => HandleRecordingComplete();
+            recorder.OnRecordingFailed += (_, e) => HandleRecordingError($"录制失败：{e.Error}");
 
             startTime = DateTime.Now;
             timer.Start();
-            capture.StartRecording();
+            IsRecording = true;
+
+            var source = mode == CaptureTargetMode.SpecificWindow
+                ? new WindowRecordingSource(targetWindowHandle)
+                : new DisplayRecordingSource(0);
+
+            recorder.Record(path, source);
         }
         catch (Exception ex)
         {
-            Cleanup();
-            ErrorOccurred?.Invoke(this, $"启动录制失败：{ex.Message}");
+            HandleRecordingError($"启动录制失败：{ex.Message}");
         }
     }
 
@@ -57,31 +65,58 @@ public sealed class AudioRecorder : IDisposable
             return;
         }
 
-        capture?.StopRecording();
+        recorder?.Stop();
     }
 
-    private void OnCaptureStopped(object? sender, StoppedEventArgs e)
+    private static RecorderOptions BuildOptions()
+    {
+        return new RecorderOptions
+        {
+            RecorderMode = RecorderMode.Video,
+            VideoOptions = new VideoOptions
+            {
+                Framerate = 30,
+                IsFixedFramerate = true,
+                BitrateMode = BitrateControlMode.Quality,
+                Quality = 70
+            },
+            AudioOptions = new AudioOptions
+            {
+                IsAudioEnabled = true,
+                IsOutputDeviceEnabled = true,
+                IsInputDeviceEnabled = false
+            },
+            MouseOptions = new MouseOptions
+            {
+                IsMousePointerEnabled = true,
+                IsMouseClicksDetected = true
+            }
+        };
+    }
+
+    private void HandleRecordingComplete()
     {
         timer.Stop();
-
-        if (e.Exception is not null)
-        {
-            Cleanup();
-            ErrorOccurred?.Invoke(this, $"录制过程中出现错误：{e.Exception.Message}");
-            return;
-        }
-
         Cleanup();
         RecordingStopped?.Invoke(this, outputPath);
     }
 
+    private void HandleRecordingError(string message)
+    {
+        timer.Stop();
+        Cleanup();
+        ErrorOccurred?.Invoke(this, message);
+    }
+
     private void Cleanup()
     {
-        capture?.Dispose();
-        capture = null;
+        IsRecording = false;
 
-        writer?.Dispose();
-        writer = null;
+        if (recorder is not null)
+        {
+            recorder.Dispose();
+            recorder = null;
+        }
     }
 
     public void Dispose()

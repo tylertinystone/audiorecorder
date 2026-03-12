@@ -18,7 +18,7 @@ public sealed class RecordingStatusForm : Form
         StartPosition = FormStartPosition.Manual;
         BackColor = Color.FromArgb(35, 35, 35);
         ForeColor = Color.White;
-        Size = new Size(260, 90);
+        Size = new Size(320, 90);
 
         statusLabel = new Label
         {
@@ -26,7 +26,7 @@ public sealed class RecordingStatusForm : Form
             ForeColor = Color.Red,
             Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold),
             Location = new Point(14, 12),
-            Text = "● 正在录制系统声音"
+            Text = "● 正在录制屏幕 + 系统声音"
         };
 
         timeLabel = new Label
@@ -39,6 +39,14 @@ public sealed class RecordingStatusForm : Form
 
         Controls.Add(statusLabel);
         Controls.Add(timeLabel);
+    }
+
+    public void SetModeText(CaptureTargetMode mode, string? windowTitle = null)
+    {
+        var target = mode == CaptureTargetMode.SpecificWindow && !string.IsNullOrWhiteSpace(windowTitle)
+            ? $"窗口: {windowTitle}"
+            : "全屏";
+        statusLabel.Text = $"● 正在录制（{target}）";
     }
 
     public void ShowAtTopRight()

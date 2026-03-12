@@ -10,20 +10,37 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem startItem;
     private readonly ToolStripMenuItem stopItem;
     private readonly ToolStripMenuItem topMostItem;
+    private readonly ToolStripMenuItem fullScreenModeItem;
+    private readonly ToolStripMenuItem windowModeItem;
+    private readonly ToolStripMenuItem pickWindowItem;
 
     private readonly AudioRecorder recorder = new();
     private readonly RecordingStatusForm statusForm = new();
 
+    private CaptureTargetMode captureMode = CaptureTargetMode.FullScreen;
+    private WindowItem? selectedWindow;
+
     public TrayApplicationContext()
     {
-        startItem = new ToolStripMenuItem("开始录制系统声音", null, StartRecording);
+        startItem = new ToolStripMenuItem("开始录制（屏幕+系统声音）", null, StartRecording);
         stopItem = new ToolStripMenuItem("停止录制", null, StopRecording) { Enabled = false };
         topMostItem = new ToolStripMenuItem("状态窗口置顶") { Checked = true, CheckOnClick = true };
         topMostItem.CheckedChanged += (_, _) => statusForm.TopMost = topMostItem.Checked;
 
+        fullScreenModeItem = new ToolStripMenuItem("录制全屏") { CheckOnClick = true, Checked = true };
+        windowModeItem = new ToolStripMenuItem("录制指定窗口") { CheckOnClick = true };
+        pickWindowItem = new ToolStripMenuItem("选择目标窗口...", null, PickWindow);
+
+        fullScreenModeItem.Click += (_, _) => SetMode(CaptureTargetMode.FullScreen);
+        windowModeItem.Click += (_, _) => SetMode(CaptureTargetMode.SpecificWindow);
+
         var menu = new ContextMenuStrip();
         menu.Items.Add(startItem);
         menu.Items.Add(stopItem);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(fullScreenModeItem);
+        menu.Items.Add(windowModeItem);
+        menu.Items.Add(pickWindowItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(topMostItem);
         menu.Items.Add(new ToolStripSeparator());
@@ -31,7 +48,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         trayIcon = new NotifyIcon
         {
-            Text = "系统声音录制器",
+            Text = "录屏录音工具",
             Icon = SystemIcons.Shield,
             ContextMenuStrip = menu,
             Visible = true
@@ -55,6 +72,24 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
     }
 
+    private void SetMode(CaptureTargetMode mode)
+    {
+        captureMode = mode;
+        fullScreenModeItem.Checked = mode == CaptureTargetMode.FullScreen;
+        windowModeItem.Checked = mode == CaptureTargetMode.SpecificWindow;
+    }
+
+    private void PickWindow(object? sender, EventArgs? e)
+    {
+        using var picker = new WindowPickerForm();
+        if (picker.ShowDialog() == DialogResult.OK && picker.SelectedWindow is not null)
+        {
+            selectedWindow = picker.SelectedWindow;
+            SetMode(CaptureTargetMode.SpecificWindow);
+            trayIcon.ShowBalloonTip(1200, "窗口已选择", selectedWindow.Title, ToolTipIcon.Info);
+        }
+    }
+
     private void StartRecording(object? sender, EventArgs? e)
     {
         if (recorder.IsRecording)
@@ -62,13 +97,22 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
+        if (captureMode == CaptureTargetMode.SpecificWindow && selectedWindow is null)
+        {
+            PickWindow(sender, e);
+            if (selectedWindow is null)
+            {
+                return;
+            }
+        }
+
         using var dialog = new SaveFileDialog
         {
-            Title = "选择录音文件保存位置",
-            Filter = "WAV 文件 (*.wav)|*.wav",
-            DefaultExt = "wav",
+            Title = "选择录屏文件保存位置",
+            Filter = "MP4 视频 (*.mp4)|*.mp4",
+            DefaultExt = "mp4",
             AddExtension = true,
-            FileName = $"SystemAudio_{DateTime.Now:yyyyMMdd_HHmmss}.wav"
+            FileName = $"ScreenRecord_{DateTime.Now:yyyyMMdd_HHmmss}.mp4"
         };
 
         if (dialog.ShowDialog() != DialogResult.OK)
@@ -76,10 +120,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        recorder.Start(dialog.FileName);
+        var handle = captureMode == CaptureTargetMode.SpecificWindow ? selectedWindow!.Handle : 0;
+        recorder.Start(dialog.FileName, captureMode, handle);
+
         startItem.Enabled = false;
         stopItem.Enabled = true;
         statusForm.TopMost = topMostItem.Checked;
+        statusForm.SetModeText(captureMode, selectedWindow?.Title);
         statusForm.ShowAtTopRight();
     }
 
