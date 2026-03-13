@@ -14,9 +14,10 @@
 ## 解决“创建 output 文件失败”
 
 - 推流时已改为 **双输出**（本地 MP4 + RTMP）而不是 `tee`，减少 Windows 路径转义导致的失败。
+- 若本机未安装 `virtual-audio-capturer`，会自动降级为“仅画面推流”（避免 FFmpeg 直接退出）。
 - 录制前会尝试自动创建输出目录（如果不存在）。
 - 若 FFmpeg 推流启动失败，会自动回退到最初的本地录屏（窗口句柄）方式。
-- 窗口模式恢复为最初实现方式：直接使用 `WindowRecordingSource`；全屏使用 `DisplayRecordingSource`。
+- 窗口模式恢复为最初实现方式：优先使用窗口句柄调用 `Record(path, nint/IntPtr)`，不可用时回退 `Record(path)`。
 - 本地录屏前会先确保输出目录存在，减少 `failed to create output folder` 报错。
 
 ## YouTube 同步推流说明

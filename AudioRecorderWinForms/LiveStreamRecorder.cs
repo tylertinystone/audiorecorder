@@ -7,6 +7,7 @@ namespace AudioRecorderWinForms;
 
 public sealed class LiveStreamRecorder : IDisposable
 {
+    private const string DefaultDshowAudioDevice = "virtual-audio-capturer";
     private Process? process;
     private readonly System.Timers.Timer timer;
     private DateTime startTime;
@@ -16,6 +17,7 @@ public sealed class LiveStreamRecorder : IDisposable
     public event EventHandler<TimeSpan>? ElapsedChanged;
     public event EventHandler<string>? RecordingStopped;
     public event EventHandler<string>? ErrorOccurred;
+    public event EventHandler<string>? WarningOccurred;
 
     public LiveStreamRecorder()
     {
@@ -54,11 +56,8 @@ public sealed class LiveStreamRecorder : IDisposable
             ? BuildWindowInput(targetWindowHandle, windowTitle)
             : "desktop";
 
-        var args =
-            $"-y -f gdigrab -framerate 30 -i {Quote(videoInput)} " +
-            "-f dshow -i audio=\"virtual-audio-capturer\" " +
-            "-map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k " +
-            $"{Quote(outputPath)} -map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k -f flv {Quote(rtmp)}";
+        var includeSystemAudio = HasDshowAudioDevice(settings.FfmpegPath, DefaultDshowAudioDevice);
+        var args = BuildArguments(videoInput, outputPath, rtmp, includeSystemAudio);
 
         try
         {
@@ -73,27 +72,36 @@ public sealed class LiveStreamRecorder : IDisposable
             };
 
             process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-            process.Exited += (_, _) =>
+            var currentProcess = process;
+            currentProcess.Exited += (_, _) =>
             {
                 timer.Stop();
-                if (process.ExitCode == 0)
+                if (currentProcess.ExitCode == 0)
                 {
                     RecordingStopped?.Invoke(this, outputPath);
                 }
                 else
                 {
-                    var err = process.StandardError.ReadToEnd();
-                    ErrorOccurred?.Invoke(this, $"FFmpeg 退出码 {process.ExitCode}。{Environment.NewLine}{err}");
+                    var err = currentProcess.StandardError.ReadToEnd();
+                    ErrorOccurred?.Invoke(this, $"FFmpeg 退出码 {currentProcess.ExitCode}。{Environment.NewLine}{err}");
                 }
 
-                process.Dispose();
-                process = null;
+                currentProcess.Dispose();
+                if (ReferenceEquals(process, currentProcess))
+                {
+                    process = null;
+                }
             };
 
             if (!process.Start())
             {
                 ErrorOccurred?.Invoke(this, "FFmpeg 启动失败（将回退本地录屏）。");
                 return false;
+            }
+
+            if (!includeSystemAudio)
+            {
+                WarningOccurred?.Invoke(this, "未找到音频设备 virtual-audio-capturer，本次直播将仅推送画面（无系统声音）。");
             }
 
             startTime = DateTime.Now;
@@ -154,6 +162,54 @@ public sealed class LiveStreamRecorder : IDisposable
     }
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
+
+    private static string BuildArguments(string videoInput, string outputPath, string rtmp, bool includeSystemAudio)
+    {
+        if (!includeSystemAudio)
+        {
+            return
+                $"-y -f gdigrab -framerate 30 -i {Quote(videoInput)} " +
+                $"-map 0:v -c:v libx264 -preset veryfast -pix_fmt yuv420p -an {Quote(outputPath)} " +
+                $"-map 0:v -c:v libx264 -preset veryfast -pix_fmt yuv420p -an -f flv {Quote(rtmp)}";
+        }
+
+        return
+            $"-y -f gdigrab -framerate 30 -i {Quote(videoInput)} " +
+            $"-f dshow -i audio={Quote(DefaultDshowAudioDevice)} " +
+            "-map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k " +
+            $"{Quote(outputPath)} -map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k -f flv {Quote(rtmp)}";
+    }
+
+    private static bool HasDshowAudioDevice(string ffmpegPath, string audioDeviceName)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                Arguments = "-hide_banner -list_devices true -f dshow -i dummy",
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+
+            using var probe = Process.Start(psi);
+            if (probe is null)
+            {
+                return false;
+            }
+
+            var stderr = probe.StandardError.ReadToEnd();
+            probe.WaitForExit(3000);
+
+            return stderr.Contains(audioDeviceName, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static string BuildWindowInput(nint targetWindowHandle, string? windowTitle)
     {

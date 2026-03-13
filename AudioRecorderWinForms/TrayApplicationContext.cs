@@ -70,6 +70,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         liveRecorder.ElapsedChanged += (_, elapsed) => statusForm.UpdateElapsed(elapsed);
         liveRecorder.RecordingStopped += (_, path) => HandleStopped(path);
         liveRecorder.ErrorOccurred += (_, message) => HandleError(message);
+        liveRecorder.WarningOccurred += (_, message) => HandleWarning(message);
     }
 
     private void OpenLiveConfig(object? sender, EventArgs? e)
@@ -107,6 +108,14 @@ public sealed class TrayApplicationContext : ApplicationContext
     private void RunOnUiThread(Action action)
     {
         uiContext.Post(_ => action(), null);
+    }
+
+    private void HandleWarning(string message)
+    {
+        RunOnUiThread(() =>
+        {
+            trayIcon.ShowBalloonTip(2500, "推流提示", message, ToolTipIcon.Warning);
+        });
     }
 
     private void SetMode(CaptureTargetMode mode)
