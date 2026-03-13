@@ -45,10 +45,9 @@ public sealed class LiveStreamRecorder : IDisposable
                 Directory.CreateDirectory(outputDir);
             }
         }
-        catch (Exception ex)
+        catch
         {
-            ErrorOccurred?.Invoke(this, $"创建输出目录失败：{ex.Message}");
-            return false;
+            // 非致命：目录创建失败时由 FFmpeg 自身报错，主流程可回退到本地录屏
         }
 
         var videoInput = mode == CaptureTargetMode.SpecificWindow && !string.IsNullOrWhiteSpace(windowTitle)
@@ -93,7 +92,7 @@ public sealed class LiveStreamRecorder : IDisposable
 
             if (!process.Start())
             {
-                ErrorOccurred?.Invoke(this, "FFmpeg 启动失败。");
+                ErrorOccurred?.Invoke(this, "FFmpeg 启动失败（将回退本地录屏）。");
                 return false;
             }
 
@@ -103,7 +102,7 @@ public sealed class LiveStreamRecorder : IDisposable
         }
         catch (Exception ex)
         {
-            ErrorOccurred?.Invoke(this, $"启动直播推流失败：{ex.Message}");
+            ErrorOccurred?.Invoke(this, $"启动直播推流失败（将回退本地录屏）：{ex.Message}");
             return false;
         }
     }

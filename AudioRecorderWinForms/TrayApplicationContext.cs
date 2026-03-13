@@ -151,6 +151,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             {
                 trayIcon.ShowBalloonTip(1000, "直播中", "正在录制并推送到 YouTube RTMP", ToolTipIcon.Info);
             }
+            else
+            {
+                var handleFallback = captureMode == CaptureTargetMode.SpecificWindow ? selectedWindow!.Handle : 0;
+                recorder.Start(dialog.FileName, captureMode, handleFallback);
+                started = true;
+                trayIcon.ShowBalloonTip(1400, "推流失败已回退", "已自动切换为本地录屏（句柄录制方式）", ToolTipIcon.Warning);
+            }
         }
         else
         {
