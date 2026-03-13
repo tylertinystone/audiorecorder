@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 
 namespace AudioRecorderWinForms;
 
@@ -22,29 +23,43 @@ public sealed class LiveStreamRecorder : IDisposable
         timer.Elapsed += (_, _) => ElapsedChanged?.Invoke(this, DateTime.Now - startTime);
     }
 
-    public void Start(string outputPath, CaptureTargetMode mode, string? windowTitle, LiveStreamSettings settings)
+    public bool Start(string outputPath, CaptureTargetMode mode, string? windowTitle, LiveStreamSettings settings)
     {
         if (IsRunning)
         {
-            return;
+            return true;
         }
 
         var rtmp = settings.FullRtmpUrl;
         if (string.IsNullOrWhiteSpace(rtmp) || !rtmp.StartsWith("rtmp", true, CultureInfo.InvariantCulture))
         {
             ErrorOccurred?.Invoke(this, "直播地址无效，请检查 RTMP 地址和 Stream Key。");
-            return;
+            return false;
+        }
+
+        try
+        {
+            var outputDir = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrWhiteSpace(outputDir) && !Directory.Exists(outputDir))
+            {
+                Directory.CreateDirectory(outputDir);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorOccurred?.Invoke(this, $"创建输出目录失败：{ex.Message}");
+            return false;
         }
 
         var videoInput = mode == CaptureTargetMode.SpecificWindow && !string.IsNullOrWhiteSpace(windowTitle)
-            ? $"title={Escape(windowTitle)}"
+            ? $"title={windowTitle}"
             : "desktop";
 
         var args =
             $"-y -f gdigrab -framerate 30 -i {Quote(videoInput)} " +
             "-f dshow -i audio=\"virtual-audio-capturer\" " +
-            "-c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k " +
-            $"-f tee \"[f=mp4]{Escape(outputPath)}|[f=flv]{Escape(rtmp)}\"";
+            "-map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k " +
+            $"{Quote(outputPath)} -map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k -f flv {Quote(rtmp)}";
 
         try
         {
@@ -79,15 +94,17 @@ public sealed class LiveStreamRecorder : IDisposable
             if (!process.Start())
             {
                 ErrorOccurred?.Invoke(this, "FFmpeg 启动失败。");
-                return;
+                return false;
             }
 
             startTime = DateTime.Now;
             timer.Start();
+            return true;
         }
         catch (Exception ex)
         {
             ErrorOccurred?.Invoke(this, $"启动直播推流失败：{ex.Message}");
+            return false;
         }
     }
 
@@ -137,7 +154,5 @@ public sealed class LiveStreamRecorder : IDisposable
         }
     }
 
-    private static string Quote(string value) => $"\"{Escape(value)}\"";
-
-    private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("|", "\\|");
+    private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}";
 }
