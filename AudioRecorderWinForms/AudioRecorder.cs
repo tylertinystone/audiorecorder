@@ -46,11 +46,12 @@ public sealed class AudioRecorder : IDisposable
             timer.Start();
             IsRecording = true;
 
-            var source = mode == CaptureTargetMode.SpecificWindow
-                ? new WindowRecordingSource(targetWindowHandle)
-                : new DisplayRecordingSource(0);
+            if (mode == CaptureTargetMode.SpecificWindow && targetWindowHandle != 0 && TryRecordWindow(path, targetWindowHandle))
+            {
+                return;
+            }
 
-            recorder.Record(path, source);
+            recorder.Record(path);
         }
         catch (Exception ex)
         {
@@ -58,6 +59,25 @@ public sealed class AudioRecorder : IDisposable
         }
     }
 
+
+    private bool TryRecordWindow(string path, nint targetWindowHandle)
+    {
+        if (recorder is null)
+        {
+            return false;
+        }
+
+        var method = typeof(Recorder).GetMethod("Record", new[] { typeof(string), typeof(nint) })
+            ?? typeof(Recorder).GetMethod("Record", new[] { typeof(string), typeof(IntPtr) });
+
+        if (method is null)
+        {
+            return false;
+        }
+
+        method.Invoke(recorder, new object[] { path, targetWindowHandle });
+        return true;
+    }
     public void Stop()
     {
         if (!IsRecording)
