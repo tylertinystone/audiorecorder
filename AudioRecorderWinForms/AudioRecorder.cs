@@ -17,9 +17,6 @@ public sealed class AudioRecorder : IDisposable
     private DateTime startTime;
     private string outputPath = string.Empty;
 
-    private CaptureTargetMode currentMode = CaptureTargetMode.FullScreen;
-    private bool retriedWithFullScreen;
-
     public bool IsRecording { get; private set; }
 
     public event EventHandler<TimeSpan>? ElapsedChanged;
@@ -42,22 +39,34 @@ public sealed class AudioRecorder : IDisposable
         try
         {
             outputPath = path;
-            currentMode = mode;
-            retriedWithFullScreen = false;
-
             EnsureOutputDirectory(path);
-            CreateRecorder();
+
+            recorder = Recorder.CreateRecorder(BuildOptions());
+            recorder.OnRecordingComplete += (_, _) => HandleRecordingComplete();
+            recorder.OnRecordingFailed += (_, e) => HandleRecordingError($"录制失败：{e.Error}");
 
             startTime = DateTime.Now;
             timer.Start();
             IsRecording = true;
 
-            if (mode == CaptureTargetMode.SpecificWindow && targetWindowHandle != 0 && TryRecordWindow(path, targetWindowHandle))
+            if (mode == CaptureTargetMode.SpecificWindow)
             {
+                if (targetWindowHandle == 0)
+                {
+                    HandleRecordingError("录制失败：未选择有效窗口句柄。");
+                    return;
+                }
+
+                if (TryRecordWindow(path, targetWindowHandle))
+                {
+                    return;
+                }
+
+                HandleRecordingError("录制失败：当前 ScreenRecorderLib 版本不支持窗口句柄录制。\n请改为全屏模式或升级捕获组件。");
                 return;
             }
 
-            recorder!.Record(path);
+            recorder.Record(path);
         }
         catch (Exception ex)
         {
@@ -77,38 +86,6 @@ public sealed class AudioRecorder : IDisposable
         {
             Directory.CreateDirectory(dir);
         }
-    }
-
-    private void CreateRecorder()
-    {
-        CleanupRecorderOnly();
-        recorder = Recorder.CreateRecorder(BuildOptions());
-        recorder.OnRecordingComplete += (_, _) => HandleRecordingComplete();
-        recorder.OnRecordingFailed += (_, e) => HandleRecordingFailed(e.Error);
-    }
-
-    private void HandleRecordingFailed(string error)
-    {
-        // 指定窗口失败时自动回退到全屏，避免句柄失效/目标窗口渲染不可捕获导致整体失败
-        if (currentMode == CaptureTargetMode.SpecificWindow && !retriedWithFullScreen)
-        {
-            retriedWithFullScreen = true;
-            currentMode = CaptureTargetMode.FullScreen;
-
-            try
-            {
-                CreateRecorder();
-                recorder!.Record(outputPath);
-                return;
-            }
-            catch (Exception ex)
-            {
-                HandleRecordingError($"窗口录制失败且回退全屏失败：{ex.Message}");
-                return;
-            }
-        }
-
-        HandleRecordingError($"录制失败：{error}");
     }
 
     private bool TryRecordWindow(string path, nint targetWindowHandle)
@@ -131,8 +108,9 @@ public sealed class AudioRecorder : IDisposable
             method.Invoke(recorder, new object[] { path, targetWindowHandle });
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            HandleRecordingError($"窗口录制启动失败：{ex.Message}");
             return false;
         }
     }
@@ -187,19 +165,15 @@ public sealed class AudioRecorder : IDisposable
         ErrorOccurred?.Invoke(this, message);
     }
 
-    private void CleanupRecorderOnly()
+    private void Cleanup()
     {
+        IsRecording = false;
+
         if (recorder is not null)
         {
             recorder.Dispose();
             recorder = null;
         }
-    }
-
-    private void Cleanup()
-    {
-        IsRecording = false;
-        CleanupRecorderOnly();
     }
 
     public void Dispose()
