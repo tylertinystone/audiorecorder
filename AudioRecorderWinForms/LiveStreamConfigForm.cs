@@ -37,6 +37,8 @@ public sealed class LiveStreamConfigForm : Form
             Location = new Point(585, 123),
             Width = 85
         };
+        browseButton.AccessibleName = "浏览FFmpeg路径";
+        browseButton.AccessibleDescription = "选择 ffmpeg.exe 可执行文件";
         browseButton.Click += (_, _) => BrowseFfmpegPath();
 
         var note = new Label
@@ -74,13 +76,34 @@ public sealed class LiveStreamConfigForm : Form
         settings.FfmpegPath = ffmpegPathTextBox.Text.Trim();
     }
 
+
+    private string TryGetInitialDirectory()
+    {
+        var path = ffmpegPathTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        }
+
+        if (System.IO.Directory.Exists(path))
+        {
+            return path;
+        }
+
+        var dir = System.IO.Path.GetDirectoryName(path);
+        return string.IsNullOrWhiteSpace(dir) || !System.IO.Directory.Exists(dir)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)
+            : dir;
+    }
+
     private void BrowseFfmpegPath()
     {
         using var dialog = new OpenFileDialog
         {
             Title = "选择 FFmpeg 可执行文件",
-            Filter = "可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*",
+            Filter = "可执行文件 (*.exe)|*.exe|批处理文件 (*.cmd;*.bat)|*.cmd;*.bat|所有文件 (*.*)|*.*",
             CheckFileExists = true,
+            InitialDirectory = TryGetInitialDirectory(),
             FileName = string.IsNullOrWhiteSpace(ffmpegPathTextBox.Text) ? "ffmpeg.exe" : ffmpegPathTextBox.Text
         };
 
