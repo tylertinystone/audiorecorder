@@ -62,7 +62,7 @@ public sealed class AudioRecorder : IDisposable
                     return;
                 }
 
-                HandleRecordingError("录制失败：当前 ScreenRecorderLib 版本不支持窗口句柄录制。\n请改为全屏模式或升级捕获组件。");
+                HandleRecordingError("录制失败：当前 ScreenRecorderLib 缺少可用的窗口录制接口（已尝试 WindowRecordingSource 与句柄重载）。\n请改为全屏模式或更换兼容版本。");
                 return;
             }
 
@@ -95,6 +95,13 @@ public sealed class AudioRecorder : IDisposable
             return false;
         }
 
+        // 方案1（第一版思路）：优先尝试 WindowRecordingSource + Record(path, source)
+        if (TryRecordWithWindowSource(path, targetWindowHandle))
+        {
+            return true;
+        }
+
+        // 方案2：尝试 Record(path, IntPtr/nint) 句柄重载
         var method = typeof(Recorder).GetMethod("Record", new[] { typeof(string), typeof(nint) })
             ?? typeof(Recorder).GetMethod("Record", new[] { typeof(string), typeof(IntPtr) });
 
@@ -108,9 +115,76 @@ public sealed class AudioRecorder : IDisposable
             method.Invoke(recorder, new object[] { path, targetWindowHandle });
             return true;
         }
-        catch (Exception ex)
+        catch
         {
-            HandleRecordingError($"窗口录制启动失败：{ex.Message}");
+            return false;
+        }
+    }
+
+    private bool TryRecordWithWindowSource(string path, nint targetWindowHandle)
+    {
+        if (recorder is null)
+        {
+            return false;
+        }
+
+        var asm = typeof(Recorder).Assembly;
+        var windowSourceType = asm.GetType("ScreenRecorderLib.WindowRecordingSource");
+        if (windowSourceType is null)
+        {
+            return false;
+        }
+
+        object? source = null;
+
+        try
+        {
+            source = Activator.CreateInstance(windowSourceType, new object[] { targetWindowHandle });
+        }
+        catch
+        {
+            try
+            {
+                source = Activator.CreateInstance(windowSourceType, new object[] { (IntPtr)targetWindowHandle });
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        var recordWithSource = typeof(Recorder).GetMethod("Record", new[] { typeof(string), windowSourceType });
+
+        if (recordWithSource is null)
+        {
+            foreach (var m in typeof(Recorder).GetMethods())
+            {
+                if (m.Name != "Record")
+                {
+                    continue;
+                }
+
+                var ps = m.GetParameters();
+                if (ps.Length == 2 && ps[0].ParameterType == typeof(string) && ps[1].ParameterType.IsAssignableFrom(windowSourceType))
+                {
+                    recordWithSource = m;
+                    break;
+                }
+            }
+        }
+
+        if (recordWithSource is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            recordWithSource.Invoke(recorder, new[] { (object)path, source! });
+            return true;
+        }
+        catch
+        {
             return false;
         }
     }
