@@ -16,9 +16,7 @@
 - 推流时已改为 **双输出**（本地 MP4 + RTMP）而不是 `tee`，减少 Windows 路径转义导致的失败。
 - 录制前会尝试自动创建输出目录（如果不存在）。
 - 若 FFmpeg 推流启动失败，会自动回退到最初的本地录屏（窗口句柄）方式。
-- 窗口模式下不再自动切到全屏；若窗口句柄录制失败会直接报错，便于定位窗口捕获问题。
-- 窗口录制会优先使用第一版同类方式（`WindowRecordingSource`）再回退句柄重载，提高普通窗口兼容性。
-- `ScreenRecorderLib` 已切换到第一版兼容思路（较早稳定版本）以优先恢复普通窗口录制能力。
+- 窗口模式恢复为最初实现方式：直接使用 `WindowRecordingSource`；全屏使用 `DisplayRecordingSource`。
 - 本地录屏前会先确保输出目录存在，减少 `failed to create output folder` 报错。
 
 ## YouTube 同步推流说明
