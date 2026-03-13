@@ -1,5 +1,6 @@
 using ScreenRecorderLib;
 using System;
+using System.IO;
 
 namespace AudioRecorderWinForms;
 
@@ -44,6 +45,7 @@ public sealed class AudioRecorder : IDisposable
             currentMode = mode;
             retriedWithFullScreen = false;
 
+            EnsureOutputDirectory(path);
             CreateRecorder();
 
             startTime = DateTime.Now;
@@ -60,6 +62,20 @@ public sealed class AudioRecorder : IDisposable
         catch (Exception ex)
         {
             HandleRecordingError($"启动录制失败：{ex.Message}");
+        }
+    }
+
+    private static void EnsureOutputDirectory(string path)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(dir))
+        {
+            return;
+        }
+
+        if (!Directory.Exists(dir))
+        {
+            Directory.CreateDirectory(dir);
         }
     }
 
