@@ -5,6 +5,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x86;x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
 
     <!-- 避免外部 Directory.Build.props/targets 的全局通配导致源文件和程序集特性重复 -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>

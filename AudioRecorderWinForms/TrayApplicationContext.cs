@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace AudioRecorderWinForms;
@@ -19,12 +20,14 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly LiveStreamRecorder liveRecorder = new();
     private readonly RecordingStatusForm statusForm = new();
     private readonly LiveStreamSettings liveSettings = new();
+    private readonly SynchronizationContext uiContext;
 
     private CaptureTargetMode captureMode = CaptureTargetMode.FullScreen;
     private WindowItem? selectedWindow;
 
     public TrayApplicationContext()
     {
+        uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         startItem = new ToolStripMenuItem("开始录制（屏幕+系统声音）", null, StartRecording);
         stopItem = new ToolStripMenuItem("停止录制", null, StopRecording) { Enabled = false };
         topMostItem = new ToolStripMenuItem("状态窗口置顶") { Checked = true, CheckOnClick = true };
@@ -81,18 +84,29 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void HandleStopped(string path)
     {
-        statusForm.Hide();
-        startItem.Enabled = true;
-        stopItem.Enabled = false;
-        trayIcon.ShowBalloonTip(1500, "录制完成", $"文件已保存：{path}", ToolTipIcon.Info);
+        RunOnUiThread(() =>
+        {
+            statusForm.Hide();
+            startItem.Enabled = true;
+            stopItem.Enabled = false;
+            trayIcon.ShowBalloonTip(1500, "录制完成", $"文件已保存：{path}", ToolTipIcon.Info);
+        });
     }
 
     private void HandleError(string message)
     {
-        statusForm.Hide();
-        startItem.Enabled = true;
-        stopItem.Enabled = false;
-        MessageBox.Show(message, "录制错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        RunOnUiThread(() =>
+        {
+            statusForm.Hide();
+            startItem.Enabled = true;
+            stopItem.Enabled = false;
+            MessageBox.Show(message, "录制错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        });
+    }
+
+    private void RunOnUiThread(Action action)
+    {
+        uiContext.Post(_ => action(), null);
     }
 
     private void SetMode(CaptureTargetMode mode)
