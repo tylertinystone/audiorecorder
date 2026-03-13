@@ -13,9 +13,13 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem fullScreenModeItem;
     private readonly ToolStripMenuItem windowModeItem;
     private readonly ToolStripMenuItem pickWindowItem;
+    private readonly ToolStripMenuItem liveConfigItem;
 
     private readonly AudioRecorder recorder = new();
+    private readonly LiveStreamRecorder liveRecorder = new();
     private readonly RecordingStatusForm statusForm = new();
+
+    private readonly LiveStreamSettings liveSettings = new();
 
     private CaptureTargetMode captureMode = CaptureTargetMode.FullScreen;
     private WindowItem? selectedWindow;
@@ -30,6 +34,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         fullScreenModeItem = new ToolStripMenuItem("录制全屏") { CheckOnClick = true, Checked = true };
         windowModeItem = new ToolStripMenuItem("录制指定窗口") { CheckOnClick = true };
         pickWindowItem = new ToolStripMenuItem("选择目标窗口...", null, PickWindow);
+        liveConfigItem = new ToolStripMenuItem("YouTube 推流设置...", null, OpenLiveConfig);
 
         fullScreenModeItem.Click += (_, _) => SetMode(CaptureTargetMode.FullScreen);
         windowModeItem.Click += (_, _) => SetMode(CaptureTargetMode.SpecificWindow);
@@ -42,6 +47,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add(windowModeItem);
         menu.Items.Add(pickWindowItem);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(liveConfigItem);
         menu.Items.Add(topMostItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => ExitThread());
@@ -56,20 +62,38 @@ public sealed class TrayApplicationContext : ApplicationContext
         trayIcon.DoubleClick += StartRecording;
 
         recorder.ElapsedChanged += (_, elapsed) => statusForm.UpdateElapsed(elapsed);
-        recorder.RecordingStopped += (_, path) =>
+        recorder.RecordingStopped += (_, path) => HandleStopped(path);
+        recorder.ErrorOccurred += (_, message) => HandleError(message);
+
+        liveRecorder.ElapsedChanged += (_, elapsed) => statusForm.UpdateElapsed(elapsed);
+        liveRecorder.RecordingStopped += (_, path) => HandleStopped(path);
+        liveRecorder.ErrorOccurred += (_, message) => HandleError(message);
+    }
+
+    private void OpenLiveConfig(object? sender, EventArgs? e)
+    {
+        using var form = new LiveStreamConfigForm(liveSettings);
+        if (form.ShowDialog() == DialogResult.OK)
         {
-            statusForm.Hide();
-            startItem.Enabled = true;
-            stopItem.Enabled = false;
-            trayIcon.ShowBalloonTip(1500, "录制完成", $"文件已保存：{path}", ToolTipIcon.Info);
-        };
-        recorder.ErrorOccurred += (_, message) =>
-        {
-            statusForm.Hide();
-            startItem.Enabled = true;
-            stopItem.Enabled = false;
-            MessageBox.Show(message, "录制错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        };
+            form.ApplyTo(liveSettings);
+            trayIcon.ShowBalloonTip(1200, "推流设置", liveSettings.Enabled ? "已启用录制同步推流" : "已关闭同步推流", ToolTipIcon.Info);
+        }
+    }
+
+    private void HandleStopped(string path)
+    {
+        statusForm.Hide();
+        startItem.Enabled = true;
+        stopItem.Enabled = false;
+        trayIcon.ShowBalloonTip(1500, "录制完成", $"文件已保存：{path}", ToolTipIcon.Info);
+    }
+
+    private void HandleError(string message)
+    {
+        statusForm.Hide();
+        startItem.Enabled = true;
+        stopItem.Enabled = false;
+        MessageBox.Show(message, "录制错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 
     private void SetMode(CaptureTargetMode mode)
@@ -92,7 +116,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void StartRecording(object? sender, EventArgs? e)
     {
-        if (recorder.IsRecording)
+        if (recorder.IsRecording || liveRecorder.IsRunning)
         {
             return;
         }
@@ -120,8 +144,16 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        var handle = captureMode == CaptureTargetMode.SpecificWindow ? selectedWindow!.Handle : 0;
-        recorder.Start(dialog.FileName, captureMode, handle);
+        if (liveSettings.Enabled)
+        {
+            liveRecorder.Start(dialog.FileName, captureMode, selectedWindow?.Title, liveSettings);
+            trayIcon.ShowBalloonTip(1000, "直播中", "正在录制并推送到 YouTube RTMP", ToolTipIcon.Info);
+        }
+        else
+        {
+            var handle = captureMode == CaptureTargetMode.SpecificWindow ? selectedWindow!.Handle : 0;
+            recorder.Start(dialog.FileName, captureMode, handle);
+        }
 
         startItem.Enabled = false;
         stopItem.Enabled = true;
@@ -133,11 +165,13 @@ public sealed class TrayApplicationContext : ApplicationContext
     private void StopRecording(object? sender, EventArgs? e)
     {
         recorder.Stop();
+        liveRecorder.Stop();
     }
 
     protected override void ExitThreadCore()
     {
         recorder.Dispose();
+        liveRecorder.Dispose();
         trayIcon.Visible = false;
         trayIcon.Dispose();
         statusForm.Dispose();
