@@ -58,7 +58,8 @@ public sealed class AudioRecorder : IDisposable
                     return;
                 }
 
-                if (!TryRecordWithSource(path, "ScreenRecorderLib.WindowRecordingSource", targetWindowHandle))
+                if (!TryRecordWithSource(path, "WindowRecordingSource", targetWindowHandle)
+                    && !TryRecordWindowHandle(path, targetWindowHandle))
                 {
                     HandleRecordingError("录制失败：当前版本不支持窗口源录制接口。");
                 }
@@ -66,7 +67,7 @@ public sealed class AudioRecorder : IDisposable
                 return;
             }
 
-            if (!TryRecordWithSource(path, "ScreenRecorderLib.DisplayRecordingSource", 0))
+            if (!TryRecordWithSource(path, "DisplayRecordingSource", 0))
             {
                 recorder.Record(path);
             }
@@ -77,7 +78,7 @@ public sealed class AudioRecorder : IDisposable
         }
     }
 
-    private bool TryRecordWithSource(string path, string sourceTypeName, nint handle)
+    private bool TryRecordWithSource(string path, string sourceTypeName, object sourceArg)
     {
         if (recorder is null)
         {
@@ -85,13 +86,22 @@ public sealed class AudioRecorder : IDisposable
         }
 
         var asm = typeof(Recorder).Assembly;
-        var sourceType = asm.GetType(sourceTypeName);
+        Type? sourceType = null;
+        foreach (var t in asm.GetTypes())
+        {
+            if (string.Equals(t.Name, sourceTypeName, StringComparison.Ordinal))
+            {
+                sourceType = t;
+                break;
+            }
+        }
+
         if (sourceType is null)
         {
             return false;
         }
 
-        var source = CreateSource(sourceType, handle);
+        var source = CreateSource(sourceType, sourceArg);
         if (source is null)
         {
             return false;
@@ -107,23 +117,143 @@ public sealed class AudioRecorder : IDisposable
         return true;
     }
 
-    private static object? CreateSource(Type sourceType, nint handle)
+    private static object? CreateSource(Type sourceType, object sourceArg)
     {
+        foreach (var ctor in sourceType.GetConstructors())
+        {
+            var ps = ctor.GetParameters();
+            if (ps.Length != 1)
+            {
+                continue;
+            }
+
+            if (TryConvertArg(sourceArg, ps[0].ParameterType, out var converted))
+            {
+                try
+                {
+                    return ctor.Invoke(new[] { converted! });
+                }
+                catch
+                {
+                }
+            }
+        }
+
         try
         {
-            return Activator.CreateInstance(sourceType, new object[] { handle });
-        }
-        catch
-        {
-            try
-            {
-                return Activator.CreateInstance(sourceType, new object[] { (IntPtr)handle });
-            }
-            catch
+            var source = Activator.CreateInstance(sourceType);
+            if (source is null)
             {
                 return null;
             }
+
+            foreach (var propertyName in new[] { "Handle", "Hwnd", "WindowHandle", "DisplayIndex", "MonitorIndex" })
+            {
+                var property = sourceType.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+                if (property is null || !property.CanWrite)
+                {
+                    continue;
+                }
+
+                if (TryConvertArg(sourceArg, property.PropertyType, out var converted))
+                {
+                    property.SetValue(source, converted);
+                    return source;
+                }
+            }
         }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static bool TryConvertArg(object value, Type targetType, out object? converted)
+    {
+        converted = null;
+
+        if (targetType.IsInstanceOfType(value))
+        {
+            converted = value;
+            return true;
+        }
+
+        if (value is nint nvalue)
+        {
+            if (targetType == typeof(IntPtr) || targetType == typeof(nint))
+            {
+                converted = (IntPtr)nvalue;
+                return true;
+            }
+
+            if (targetType == typeof(long))
+            {
+                converted = (long)nvalue;
+                return true;
+            }
+
+            if (targetType == typeof(int))
+            {
+                converted = unchecked((int)nvalue);
+                return true;
+            }
+        }
+
+        if (value is int ivalue)
+        {
+            if (targetType == typeof(int))
+            {
+                converted = ivalue;
+                return true;
+            }
+
+            if (targetType == typeof(long))
+            {
+                converted = (long)ivalue;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryRecordWindowHandle(string path, nint targetWindowHandle)
+    {
+        if (recorder is null)
+        {
+            return false;
+        }
+
+        foreach (var method in typeof(Recorder).GetMethods())
+        {
+            if (method.Name != "Record")
+            {
+                continue;
+            }
+
+            var ps = method.GetParameters();
+            if (ps.Length != 2 || ps[0].ParameterType != typeof(string))
+            {
+                continue;
+            }
+
+            if (!TryConvertArg(targetWindowHandle, ps[1].ParameterType, out var converted))
+            {
+                continue;
+            }
+
+            try
+            {
+                method.Invoke(recorder, new[] { (object)path, converted! });
+                return true;
+            }
+            catch
+            {
+            }
+        }
+
+        return false;
     }
 
     private static MethodInfo? FindRecordMethod(Type sourceType)
