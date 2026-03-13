@@ -1,6 +1,7 @@
 using ScreenRecorderLib;
 using System;
 using System.IO;
+using System.Reflection;
 
 namespace AudioRecorderWinForms;
 
@@ -49,7 +50,6 @@ public sealed class AudioRecorder : IDisposable
             timer.Start();
             IsRecording = true;
 
-            RecordingSourceBase source;
             if (mode == CaptureTargetMode.SpecificWindow)
             {
                 if (targetWindowHandle == 0)
@@ -58,19 +58,96 @@ public sealed class AudioRecorder : IDisposable
                     return;
                 }
 
-                source = new WindowRecordingSource(targetWindowHandle);
-            }
-            else
-            {
-                source = new DisplayRecordingSource(0);
+                if (!TryRecordWithSource(path, "ScreenRecorderLib.WindowRecordingSource", targetWindowHandle))
+                {
+                    HandleRecordingError("录制失败：当前版本不支持窗口源录制接口。");
+                }
+
+                return;
             }
 
-            recorder.Record(path, source);
+            if (!TryRecordWithSource(path, "ScreenRecorderLib.DisplayRecordingSource", 0))
+            {
+                recorder.Record(path);
+            }
         }
         catch (Exception ex)
         {
             HandleRecordingError($"启动录制失败：{ex.Message}");
         }
+    }
+
+    private bool TryRecordWithSource(string path, string sourceTypeName, nint handle)
+    {
+        if (recorder is null)
+        {
+            return false;
+        }
+
+        var asm = typeof(Recorder).Assembly;
+        var sourceType = asm.GetType(sourceTypeName);
+        if (sourceType is null)
+        {
+            return false;
+        }
+
+        var source = CreateSource(sourceType, handle);
+        if (source is null)
+        {
+            return false;
+        }
+
+        var recordMethod = FindRecordMethod(sourceType);
+        if (recordMethod is null)
+        {
+            return false;
+        }
+
+        recordMethod.Invoke(recorder, new[] { (object)path, source });
+        return true;
+    }
+
+    private static object? CreateSource(Type sourceType, nint handle)
+    {
+        try
+        {
+            return Activator.CreateInstance(sourceType, new object[] { handle });
+        }
+        catch
+        {
+            try
+            {
+                return Activator.CreateInstance(sourceType, new object[] { (IntPtr)handle });
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    private static MethodInfo? FindRecordMethod(Type sourceType)
+    {
+        foreach (var method in typeof(Recorder).GetMethods())
+        {
+            if (method.Name != "Record")
+            {
+                continue;
+            }
+
+            var ps = method.GetParameters();
+            if (ps.Length != 2 || ps[0].ParameterType != typeof(string))
+            {
+                continue;
+            }
+
+            if (ps[1].ParameterType == sourceType || ps[1].ParameterType.IsAssignableFrom(sourceType))
+            {
+                return method;
+            }
+        }
+
+        return null;
     }
 
     private static void EnsureOutputDirectory(string path)
