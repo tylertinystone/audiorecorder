@@ -10,6 +10,7 @@ public sealed class LiveStreamConfigForm : Form
     private readonly TextBox rtmpUrlTextBox;
     private readonly TextBox streamKeyTextBox;
     private readonly TextBox ffmpegPathTextBox;
+    private readonly TextBox proxyTextBox;
 
     public LiveStreamConfigForm(LiveStreamSettings settings)
     {
@@ -18,7 +19,7 @@ public sealed class LiveStreamConfigForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        Size = new Size(700, 260);
+        Size = new Size(700, 300);
 
         enabledCheckBox = new CheckBox { Text = "启用录制同时推流", Location = new Point(20, 20), AutoSize = true, Checked = settings.Enabled };
 
@@ -30,6 +31,9 @@ public sealed class LiveStreamConfigForm : Form
 
         var ffmpegLabel = new Label { Text = "FFmpeg 路径:", Location = new Point(20, 128), AutoSize = true };
         ffmpegPathTextBox = new TextBox { Location = new Point(110, 125), Width = 465, Text = settings.FfmpegPath };
+
+        var proxyLabel = new Label { Text = "代理(可选):", Location = new Point(20, 163), AutoSize = true };
+        proxyTextBox = new TextBox { Location = new Point(110, 160), Width = 560, Text = settings.ProxyUrl };
 
         var browseButton = new Button
         {
@@ -43,14 +47,14 @@ public sealed class LiveStreamConfigForm : Form
 
         var note = new Label
         {
-            Text = "提示：需系统已安装 FFmpeg；系统声音采集依赖 dshow 设备（常见为 virtual-audio-capturer）。",
-            Location = new Point(20, 158),
+            Text = "提示：优先用 WASAPI 抓系统声音；若失败回退到 dshow 的 virtual-audio-capturer。代理可填 http://127.0.0.1:7890",
+            Location = new Point(20, 193),
             Width = 650,
             Height = 34
         };
 
-        var ok = new Button { Text = "确定", DialogResult = DialogResult.OK, Location = new Point(510, 196), Width = 75 };
-        var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(595, 196), Width = 75 };
+        var ok = new Button { Text = "确定", DialogResult = DialogResult.OK, Location = new Point(510, 230), Width = 75 };
+        var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(595, 230), Width = 75 };
 
         Controls.Add(enabledCheckBox);
         Controls.Add(urlLabel);
@@ -59,6 +63,8 @@ public sealed class LiveStreamConfigForm : Form
         Controls.Add(streamKeyTextBox);
         Controls.Add(ffmpegLabel);
         Controls.Add(ffmpegPathTextBox);
+        Controls.Add(proxyLabel);
+        Controls.Add(proxyTextBox);
         Controls.Add(browseButton);
         Controls.Add(note);
         Controls.Add(ok);
@@ -74,6 +80,7 @@ public sealed class LiveStreamConfigForm : Form
         settings.RtmpUrl = rtmpUrlTextBox.Text.Trim();
         settings.StreamKey = streamKeyTextBox.Text.Trim();
         settings.FfmpegPath = ffmpegPathTextBox.Text.Trim();
+        settings.ProxyUrl = proxyTextBox.Text.Trim();
     }
 
 

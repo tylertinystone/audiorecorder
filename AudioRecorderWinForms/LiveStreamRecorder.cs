@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using Microsoft.Win32;
 
 namespace AudioRecorderWinForms;
 
@@ -56,8 +57,9 @@ public sealed class LiveStreamRecorder : IDisposable
             ? BuildWindowInput(targetWindowHandle, windowTitle)
             : "desktop";
 
-        var includeSystemAudio = HasDshowAudioDevice(settings.FfmpegPath, DefaultDshowAudioDevice);
-        var args = BuildArguments(videoInput, outputPath, rtmp, includeSystemAudio);
+        var audioMode = ResolveAudioMode(settings.FfmpegPath);
+        var proxy = ResolveProxy(settings);
+        var args = BuildArguments(videoInput, outputPath, rtmp, audioMode, proxy);
 
         try
         {
@@ -70,6 +72,8 @@ public sealed class LiveStreamRecorder : IDisposable
                 RedirectStandardInput = true,
                 CreateNoWindow = true
             };
+
+            ApplyProxyEnvironment(psi, proxy);
 
             process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var currentProcess = process;
@@ -99,9 +103,13 @@ public sealed class LiveStreamRecorder : IDisposable
                 return false;
             }
 
-            if (!includeSystemAudio)
+            if (audioMode == LiveAudioMode.None)
             {
                 WarningOccurred?.Invoke(this, "未找到音频设备 virtual-audio-capturer，本次直播将仅推送画面（无系统声音）。");
+            }
+            else if (audioMode == LiveAudioMode.Wasapi)
+            {
+                WarningOccurred?.Invoke(this, "直播音频使用 WASAPI 默认输出回环采集（系统声音）。");
             }
 
             startTime = DateTime.Now;
@@ -163,21 +171,79 @@ public sealed class LiveStreamRecorder : IDisposable
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
 
-    private static string BuildArguments(string videoInput, string outputPath, string rtmp, bool includeSystemAudio)
+    private static string BuildArguments(string videoInput, string outputPath, string rtmp, LiveAudioMode audioMode, string? proxy)
     {
-        if (!includeSystemAudio)
+        var proxyArg = string.IsNullOrWhiteSpace(proxy) ? string.Empty : $"-http_proxy {Quote(proxy)} ";
+        if (audioMode == LiveAudioMode.None)
         {
             return
-                $"-y -f gdigrab -framerate 30 -i {Quote(videoInput)} " +
+                $"-y {proxyArg}-f gdigrab -framerate 30 -i {Quote(videoInput)} " +
                 $"-map 0:v -c:v libx264 -preset veryfast -pix_fmt yuv420p -an {Quote(outputPath)} " +
                 $"-map 0:v -c:v libx264 -preset veryfast -pix_fmt yuv420p -an -f flv {Quote(rtmp)}";
         }
 
+        if (audioMode == LiveAudioMode.Wasapi)
+        {
+            return
+                $"-y {proxyArg}-f gdigrab -framerate 30 -i {Quote(videoInput)} " +
+                "-f wasapi -i default " +
+                "-map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k " +
+                $"{Quote(outputPath)} -map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k -f flv {Quote(rtmp)}";
+        }
+
         return
-            $"-y -f gdigrab -framerate 30 -i {Quote(videoInput)} " +
+            $"-y {proxyArg}-f gdigrab -framerate 30 -i {Quote(videoInput)} " +
             $"-f dshow -i audio={Quote(DefaultDshowAudioDevice)} " +
             "-map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k " +
             $"{Quote(outputPath)} -map 0:v -map 1:a -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k -f flv {Quote(rtmp)}";
+    }
+
+    private static LiveAudioMode ResolveAudioMode(string ffmpegPath)
+    {
+        if (HasInputFormat(ffmpegPath, "wasapi"))
+        {
+            return LiveAudioMode.Wasapi;
+        }
+
+        if (HasDshowAudioDevice(ffmpegPath, DefaultDshowAudioDevice))
+        {
+            return LiveAudioMode.DshowVirtual;
+        }
+
+        return LiveAudioMode.None;
+    }
+
+    private static bool HasInputFormat(string ffmpegPath, string formatName)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                Arguments = "-hide_banner -formats",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var probe = Process.Start(psi);
+            if (probe is null)
+            {
+                return false;
+            }
+
+            var output = probe.StandardOutput.ReadToEnd() + probe.StandardError.ReadToEnd();
+            probe.WaitForExit(3000);
+
+            return output.Contains($" D  {formatName}", StringComparison.OrdinalIgnoreCase)
+                || output.Contains($" DE {formatName}", StringComparison.OrdinalIgnoreCase)
+                || output.Contains($" {formatName} ", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool HasDshowAudioDevice(string ffmpegPath, string audioDeviceName)
@@ -209,6 +275,103 @@ public sealed class LiveStreamRecorder : IDisposable
         {
             return false;
         }
+    }
+
+    private static string? ResolveProxy(LiveStreamSettings settings)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.ProxyUrl))
+        {
+            return settings.ProxyUrl.Trim();
+        }
+
+        var envProxy = Environment.GetEnvironmentVariable("HTTPS_PROXY")
+            ?? Environment.GetEnvironmentVariable("HTTP_PROXY")
+            ?? Environment.GetEnvironmentVariable("ALL_PROXY");
+        if (!string.IsNullOrWhiteSpace(envProxy))
+        {
+            return envProxy.Trim();
+        }
+
+        return TryReadWindowsSystemProxy();
+    }
+
+    private static void ApplyProxyEnvironment(ProcessStartInfo psi, string? proxy)
+    {
+        if (string.IsNullOrWhiteSpace(proxy))
+        {
+            return;
+        }
+
+        psi.Environment["HTTP_PROXY"] = proxy;
+        psi.Environment["HTTPS_PROXY"] = proxy;
+        psi.Environment["ALL_PROXY"] = proxy;
+        psi.Environment["http_proxy"] = proxy;
+        psi.Environment["https_proxy"] = proxy;
+        psi.Environment["all_proxy"] = proxy;
+    }
+
+    private static string? TryReadWindowsSystemProxy()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Internet Settings");
+            if (key is null)
+            {
+                return null;
+            }
+
+            var enabled = key.GetValue("ProxyEnable") as int? ?? Convert.ToInt32(key.GetValue("ProxyEnable") ?? 0, CultureInfo.InvariantCulture);
+            if (enabled == 0)
+            {
+                return null;
+            }
+
+            var server = key.GetValue("ProxyServer")?.ToString();
+            if (string.IsNullOrWhiteSpace(server))
+            {
+                return null;
+            }
+
+            var value = server.Trim();
+            if (value.Contains("=", StringComparison.Ordinal))
+            {
+                foreach (var section in value.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var pair = section.Split('=', 2, StringSplitOptions.TrimEntries);
+                    if (pair.Length != 2)
+                    {
+                        continue;
+                    }
+
+                    if (pair[0].Equals("https", StringComparison.OrdinalIgnoreCase)
+                        || pair[0].Equals("http", StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = pair[1];
+                        break;
+                    }
+                }
+            }
+
+            if (!value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                && !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                && !value.StartsWith("socks5://", StringComparison.OrdinalIgnoreCase))
+            {
+                value = $"http://{value}";
+            }
+
+            return value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private enum LiveAudioMode
+    {
+        None,
+        Wasapi,
+        DshowVirtual
     }
 
     private static string BuildWindowInput(nint targetWindowHandle, string? windowTitle)
