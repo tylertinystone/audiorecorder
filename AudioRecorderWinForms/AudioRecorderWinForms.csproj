@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x86;x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+
+    <!-- 避免外部 Directory.Build.props/targets 的全局通配导致源文件和程序集特性重复 -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="AudioRecorder.cs" />
+    <Compile Include="LiveStreamRecorder.cs" />
+    <Compile Include="LiveStreamSettings.cs" />
+    <Compile Include="NativeWindowHelper.cs" />
+    <Compile Include="RecordingStatusForm.cs" />
+    <Compile Include="TrayApplicationContext.cs" />
+    <Compile Include="WindowPickerForm.cs" />
+    <Compile Include="LiveStreamConfigForm.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="app.config" Condition="Exists('app.config')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ScreenRecorderLib" Version="1.3.2" />
+  </ItemGroup>
+</Project>
